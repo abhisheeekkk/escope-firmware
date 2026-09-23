@@ -1,4 +1,87 @@
+/*
+
+@author         : abhishekshukla9586@gmail.com
+
+Hardware:  TIM2 overflows (every 20.83ns)
+               │
+               │ Update Event (UEV) on TIM2->SR
+               ▼
+Hardware:  DMAMUX1 sees TIM2_UP request
+               │
+               │ fires DMA1_Stream0 transfer
+               ▼
+Hardware:  DMA copies 1 byte: GPIOD->IDR → capture_buf[i]
+               │
+               │ after 4096 bytes (half buffer full)
+               ▼
+Hardware:  DMA raises HTIF0 flag in DMA1->LISR
+               │
+               │ NVIC sees DMA1_Stream0_IRQn pending
+               ▼
+CPU:       DMA1_Stream0_IRQHandler()        ← stm32h7xx_it.c
+               │
+               ▼
+CPU:       HAL_DMA_IRQHandler(&hdma_tim2_up) ← HAL driver
+               │
+               │ reads DMA1->LISR, sees HTIF0 set
+               │ clears HTIF0 (that's why LISR=0 when we read it after)
+               │ checks hdma->XferHalfCpltCallback != NULL
+               ▼
+CPU:       acq_dma_half(hdma)               ← acquisition.c
+               │
+               ▼
+           half_ready = 1
+           dma_half_count++
+               │
+               │ ISR returns
+               ▼
+CPU:       main loop resumes
+               │
+               ▼
+CPU:       Acquisition_Process()
+               │
+               │ sees half_ready == 1
+               ▼
+CPU:       process_half(capture_buf, 4096)
+               │
+               ▼
+CPU:       flush_packet() → CDC_Transmit_FS()
+
+After another 4096 bytes (full buffer):
+
+
+Hardware:  DMA raises TCIF0 in DMA1->LISR
+               │
+               ▼
+CPU:       DMA1_Stream0_IRQHandler()
+               │
+               ▼
+CPU:       HAL_DMA_IRQHandler()
+               │
+               │ sees TCIF0, clears it
+               │ DMA wraps back to start of capture_buf (circular mode)
+               ▼
+CPU:       acq_dma_cplt(hdma)
+               │
+               ▼
+           half_ready = 2
+           dma_cplt_count++
+               │
+               ▼
+CPU:       Acquisition_Process()
+               │
+               ▼
+CPU:       process_half(capture_buf + 4096, 4096)
+
+*/
+
+
+
 #include "acquisition.h"
+
+
+
+
 extern TIM_HandleTypeDef htim2;
 extern DMA_HandleTypeDef hdma_tim2_up;
 extern void Error_Handler(void);

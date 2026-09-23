@@ -111,6 +111,7 @@ set(CORE_SOURCES
     Core/Src/system_stm32h7xx.c
     Core/Src/syscalls.c
     Core/Src/sysmem.c
+    Core/Src/acquisition.c
 )
 
 set(USB_APP_SOURCES

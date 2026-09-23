@@ -22,8 +22,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "acquisition.h"
 #include "usbd_cdc_if.h"
 #include <stdio.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,14 +45,26 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+TIM_HandleTypeDef htim2;
+DMA_HandleTypeDef hdma_tim2_up;
+
 /* USER CODE BEGIN PV */
 static uint32_t last_tx = 0;
+static uint32_t last_blink = 0;
+extern volatile uint32_t dma_irq_count;
+extern uint32_t dma_half_count;
+extern uint32_t dma_cplt_count;
+extern uint32_t dma_isr_val;
+extern uint32_t dma_state;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -92,9 +106,25 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USB_DEVICE_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+  Acquisition_Init();
+  Acquisition_Start();
+  /* Print DMA state immediately after start */
+  {
+    extern DMA_HandleTypeDef hdma_tim2_up;
+    char dbg[64];
+    int l = snprintf(dbg, sizeof(dbg),
+        "DMA state after start: %d, err: %lu\r\n",
+        (int)hdma_tim2_up.State,
+        (unsigned long)hdma_tim2_up.ErrorCode);
+    HAL_Delay(2000);  /* wait for USB to enumerate */
+    CDC_Transmit_FS((uint8_t*)dbg, l);
+    HAL_Delay(100);
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -104,23 +134,26 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    Acquisition_Process();
     uint32_t now = HAL_GetTick();
 
-    /* Heartbeat LED */
-    static uint32_t last_blink = 0;
     if (now - last_blink >= 500) {
       last_blink = now;
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     }
 
-    /* CDC transmit every 1s */
     if (now - last_tx >= 1000) {
       last_tx = now;
-      char msg[64];
+      char msg[128];
+      uint8_t pd = (uint8_t)(GPIOD->IDR & 0xFF);
       int len = snprintf(msg, sizeof(msg),
-        "EmbeddedScope | uptime %lums | sysclk %luMHz\r\n",
-        (unsigned long)now,
-        (unsigned long)(HAL_RCC_GetSysClockFreq()/1000000UL));
+        "EmbeddedScope | uptime %lums | PD=0x%02X | irq=%lu | half=%lu | cplt=%lu | isr=0x%08lX | st=%lu\r\n",
+        (unsigned long)now, pd,
+        (unsigned long)dma_irq_count,
+        (unsigned long)dma_half_count,
+        (unsigned long)dma_cplt_count,
+        (unsigned long)dma_isr_val,
+        (unsigned long)dma_state);
       CDC_Transmit_FS((uint8_t*)msg, (uint16_t)len);
     }
   }
@@ -187,6 +220,67 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -202,6 +296,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
@@ -212,6 +307,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PD0 PD1 PD2 PD3
+                           PD4 PD5 PD6 PD7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3
+                          |GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

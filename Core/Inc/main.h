@@ -64,6 +64,9 @@ void Error_Handler(void);
 
 /* USER CODE END Private defines */
 
+void acq_dma_half(DMA_HandleTypeDef *h);
+void acq_dma_cplt(DMA_HandleTypeDef *h);
+
 #ifdef __cplusplus
 }
 #endif

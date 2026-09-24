@@ -26,7 +26,7 @@ full source code transparency and no vendor lock-in.
 | Parameter | Value |
 |-----------|-------|
 | MCU | STM32H743VIT6 (LQFP100, Cortex-M7) |
-| Clock | 480 MHz (24 MHz HSE via PLL) |
+| Clock | 480 MHz (8 MHz HSE via PLL) |
 | Digital inputs | PD0-PD7 (8 channels) |
 | Sample rate | 48 MS/s via DMA |
 | USB | OTG FS CDC (PA11/PA12) -- appears as /dev/ttyACM0 |

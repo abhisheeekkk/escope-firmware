@@ -32,7 +32,7 @@ set(CPU_FLAGS
 add_compile_definitions(
     STM32H743xx          # Device family define — selects stm32h743xx.h
     USE_HAL_DRIVER       # Enables the HAL layer
-    HSE_VALUE=24000000U   # 8 MHz external crystal (Nucleo-H743ZI default)
+    HSE_VALUE=8000000U    # 8 MHz external crystal (Nucleo-H743ZI default, via ST-LINK MCO)
     HSE_STARTUP_TIMEOUT=100U
     LSE_STARTUP_TIMEOUT=5000U
     LSE_VALUE=32768U

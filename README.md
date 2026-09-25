@@ -216,4 +216,4 @@ to just the area you care about -- firmware, protocol, PC software, or hardware.
 
 ## License
 
-MIT
+GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE).

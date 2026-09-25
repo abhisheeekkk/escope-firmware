@@ -118,13 +118,13 @@ SECTIONS
         . = ALIGN(4);
     } >RAM_D2
 
-    /* DMA capture buffers in AXI SRAM D1 */
+    /* DMA capture buffers in D2 SRAM (same domain as DMA1, avoids D2->D1 bridge) */
     .dma_buffers (NOLOAD) :
     {
         . = ALIGN(32);          /* Cache-line aligned for DCache operations */
         *(.dma_buffers)
         . = ALIGN(32);
-    } >RAM_D1
+    } >RAM_D2
 
     /* User stack in DTCM */
     ._user_heap_stack :

@@ -9,6 +9,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "burst.h"
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -38,6 +39,10 @@
 
 TIM_HandleTypeDef htim2;
 DMA_HandleTypeDef hdma_tim2_up;
+/* Pin sweep result, sent in every burst header (reserved word):
+ * bits 0-10 = PA0-PA10 that could not follow the output, bit 11 = sweep ran,
+ * bits 16-31 = PB0-PB15 that could not follow. Read by the decoder. */
+volatile uint32_t pin_sweep_result;
 
 /* USER CODE BEGIN PV */
 static uint32_t last_tx = 0;
@@ -56,6 +61,7 @@ static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_TIM2_Init(void);
+static void Test_PWM_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -82,6 +88,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  SCB_EnableICache();
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -101,20 +108,23 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  Acquisition_Init();
-  Acquisition_Start();
+  Test_PWM_Init();
+  Burst_Init();
   /* Print DMA state immediately after start */
   {
     extern DMA_HandleTypeDef hdma_tim2_up;
-    char dbg[64];
+    char dbg[128];
     int l = snprintf(dbg, sizeof(dbg),
-        "DMA state after start: %d, err: %lu\r\n",
+        "DMA state before start: %d, err: %lu | pin sweep fail PA=0x%03lX PB=0x%04lX\r\n",
         (int)hdma_tim2_up.State,
-        (unsigned long)hdma_tim2_up.ErrorCode);
+        (unsigned long)hdma_tim2_up.ErrorCode,
+        (unsigned long)(pin_sweep_result & 0x7FFU),
+        (unsigned long)(pin_sweep_result >> 16));
     HAL_Delay(2000);  /* wait for USB to enumerate */
     CDC_Transmit_FS((uint8_t*)dbg, l);
     HAL_Delay(100);
   }
+  Burst_Start();
 
   /* USER CODE END 2 */
 
@@ -125,14 +135,14 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    Acquisition_Process();
+    Burst_Process();
     uint32_t now = HAL_GetTick();
 
     if (now - last_blink >= 500) {
       last_blink = now;
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     }
-
+#if 0
     if (now - last_tx >= 1000) {
       last_tx = now;
       char msg[128];
@@ -147,6 +157,7 @@ int main(void)
         (unsigned long)dma_state);
       CDC_Transmit_FS((uint8_t*)msg, (uint16_t)len);
     }
+#endif
   }
   /* USER CODE END 3 */
 }
@@ -264,6 +275,10 @@ static void MX_DMA_Init(void)
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
 
+  /* I/O compensation cell: needed for correct slew control on fast outputs */
+  __HAL_RCC_SYSCFG_CLK_ENABLE();
+  HAL_EnableCompensationCell();
+
   /* DMA interrupt init */
   /* DMA1_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
@@ -313,6 +328,111 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/* Test signals: PB3-PB10 each output a 10 MHz PWM so they can be shorted to
+ * PD0-PD7. Only a few of these pins have timer outputs (and TIM2 is the
+ * sampler), so TIM3 (20 MHz) triggers DMA1_Stream1 on every update, copying
+ * one word of a 2-entry table into GPIOB->BSRR (20 MHz / 2 = 10 MHz). No CPU
+ * involvement, so no ISR jitter. With only 2 steps per period every channel
+ * is a 50% square wave; use more steps (and a slower rate) to vary duty. */
+#define TEST_PWM_STEPS 2U
+/* GPIOB pin driving capture channel Dn: D0-D7 = PB3-PB10 */
+static const uint8_t test_pin[8] = {3, 4, 5, 6, 7, 8, 9, 10};
+static uint32_t test_pin_mask;                       /* OR of 1 << test_pin[ch] */
+
+static const uint8_t test_duty_pct[8] = {50, 50, 50, 50, 50, 50, 50, 50};
+static uint32_t test_bsrr[TEST_PWM_STEPS]
+    __attribute__((section(".dma_buffers")))
+    __attribute__((aligned(32)));
+static DMA_HandleTypeDef hdma_tim3_up;
+
+/* Drive each candidate pin low then high and read it back. A pin that cannot
+ * follow has something else driving it (or a hard short). Pins used by USB
+ * (PA11/PA12), SWD (PA13/PA14) and the PD capture inputs are not touched. */
+static uint32_t Test_SweepPort(GPIO_TypeDef *port, uint32_t cand)
+{
+  GPIO_InitTypeDef g = {0};
+  g.Pin = cand;
+  g.Mode = GPIO_MODE_OUTPUT_PP;
+  g.Pull = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(port, &g);
+
+  port->BSRR = cand << 16;
+  HAL_Delay(2);
+  uint32_t stuck_high = port->IDR & cand;
+  port->BSRR = cand;
+  HAL_Delay(2);
+  uint32_t stuck_low = ~port->IDR & cand;
+
+  g.Mode = GPIO_MODE_INPUT;                       /* back to a quiet state */
+  HAL_GPIO_Init(port, &g);
+  return stuck_high | stuck_low;
+}
+
+static void Test_PinSweep(void)
+{
+  uint32_t fa = Test_SweepPort(GPIOA, 0x07FFU);   /* PA0-PA10 */
+  uint32_t fb = Test_SweepPort(GPIOB, 0xFFFFU);   /* PB0-PB15 */
+  pin_sweep_result = (fb << 16) | (1U << 11) | (fa & 0x7FFU);
+}
+
+static void Test_PWM_Init(void)
+{
+  GPIO_InitTypeDef gpio = {0};
+
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_TIM3_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* PC8: DMA-rate debug pin (toggles every CAPTURE_HALF samples) */
+  GPIO_InitTypeDef dbg = {0};
+  dbg.Pin = GPIO_PIN_8;
+  dbg.Mode = GPIO_MODE_OUTPUT_PP;
+  dbg.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &dbg);
+
+  Test_PinSweep();                                /* before the pins become PWM outputs */
+
+  for (uint32_t ch = 0; ch < 8; ch++) test_pin_mask |= 1UL << test_pin[ch];
+  gpio.Pin = test_pin_mask;
+  gpio.Mode = GPIO_MODE_OUTPUT_PP;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;         /* 100 ns pulses need fast edges */
+  HAL_GPIO_Init(GPIOB, &gpio);
+
+  /* .dma_buffers is not zeroed at startup: clear the table before OR-ing bits in */
+  for (uint32_t i = 0; i < TEST_PWM_STEPS; i++) test_bsrr[i] = 0;
+  test_bsrr[0] = test_pin_mask;                         /* all high */
+  for (uint32_t ch = 0; ch < 8; ch++) {
+    uint32_t on = test_duty_pct[ch] * TEST_PWM_STEPS / 100U;
+    if (on > 0 && on < TEST_PWM_STEPS) test_bsrr[on] |= 1UL << (16 + test_pin[ch]);
+  }
+  SCB_CleanDCache_by_Addr((uint32_t *)test_bsrr, sizeof(test_bsrr));
+
+  hdma_tim3_up.Instance = DMA1_Stream1;
+  hdma_tim3_up.Init.Request = DMA_REQUEST_TIM3_UP;
+  hdma_tim3_up.Init.Direction = DMA_MEMORY_TO_PERIPH;
+  hdma_tim3_up.Init.PeriphInc = DMA_PINC_DISABLE;
+  hdma_tim3_up.Init.MemInc = DMA_MINC_ENABLE;
+  hdma_tim3_up.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+  hdma_tim3_up.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+  hdma_tim3_up.Init.Mode = DMA_CIRCULAR;
+  hdma_tim3_up.Init.Priority = DMA_PRIORITY_HIGH;
+  hdma_tim3_up.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+  if (HAL_DMA_Init(&hdma_tim3_up) != HAL_OK) Error_Handler();
+  if (HAL_DMA_Start(&hdma_tim3_up, (uint32_t)test_bsrr,
+                    (uint32_t)&GPIOB->BSRR, TEST_PWM_STEPS) != HAL_OK) Error_Handler();
+
+  /* TIM3 = 240 MHz; no prescale; ARR+1 = 12 -> 20 MHz update */
+  TIM3->PSC = 0;
+  TIM3->ARR = 12 - 1;
+  TIM3->EGR = TIM_EGR_UG;
+  TIM3->SR = 0;
+  TIM3->DIER = TIM_DIER_UDE;
+  TIM3->CR1 = TIM_CR1_CEN;
+}
 
 /* USER CODE END 4 */
 

@@ -112,6 +112,7 @@ set(CORE_SOURCES
     Core/Src/syscalls.c
     Core/Src/sysmem.c
     Core/Src/acquisition.c
+    Core/Src/burst.c
 )
 
 set(USB_APP_SOURCES

@@ -39,6 +39,7 @@
 
 TIM_HandleTypeDef htim2;
 DMA_HandleTypeDef hdma_tim2_up;
+UART_HandleTypeDef huart2;
 /* Pin sweep result, sent in every burst header (reserved word):
  * bits 0-10 = PA0-PA10 that could not follow the output, bit 11 = sweep ran,
  * bits 16-31 = PB0-PB15 that could not follow. Read by the decoder. */
@@ -46,6 +47,7 @@ volatile uint32_t pin_sweep_result;
 
 /* USER CODE BEGIN PV */
 static uint32_t last_tx = 0;
+static uint32_t last_uart_tx = 0;
 static uint32_t last_blink = 0;
 extern volatile uint32_t dma_irq_count;
 extern uint32_t dma_half_count;
@@ -62,6 +64,7 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_TIM2_Init(void);
 static void Test_PWM_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -109,6 +112,7 @@ int main(void)
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   Test_PWM_Init();
+  MX_USART2_UART_Init();   /* after the pin sweep, which would otherwise disturb PA2 */
   Burst_Init();
   /* Print DMA state immediately after start */
   {
@@ -141,6 +145,13 @@ int main(void)
     if (now - last_blink >= 500) {
       last_blink = now;
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    }
+    /* UART test pattern on PA2 (USART2 TX): a single 'U' (0x55, alternating
+     * bits) every 2 ms. One byte at 1 Mbaud is 10 us, so blocking is fine. */
+    if (now - last_uart_tx >= 2) {
+      last_uart_tx = now;
+      static const uint8_t uart_msg = 'U';
+      HAL_UART_Transmit(&huart2, (uint8_t *)&uart_msg, 1, 10);
     }
 #if 0
     if (now - last_tx >= 1000) {
@@ -425,13 +436,41 @@ static void Test_PWM_Init(void)
   if (HAL_DMA_Start(&hdma_tim3_up, (uint32_t)test_bsrr,
                     (uint32_t)&GPIOB->BSRR, TEST_PWM_STEPS) != HAL_OK) Error_Handler();
 
-  /* TIM3 = 240 MHz; no prescale; ARR+1 = 12 -> 20 MHz update */
+  /* TIM3 = 240 MHz; no prescale; ARR+1 = 120 -> 2 MHz update -> 1 MHz signal
+   if TIM3 = 240 MHz; no prescale; ARR+1 = 12 -> 20 MHz update -> 10 MHz signal
+   now: ARR+1 = 24 -> 10 MHz update -> 5 MHz signal */
   TIM3->PSC = 0;
-  TIM3->ARR = 12 - 1;
+  TIM3->ARR = 120 - 1;
   TIM3->EGR = TIM_EGR_UG;
   TIM3->SR = 0;
   TIM3->DIER = TIM_DIER_UDE;
   TIM3->CR1 = TIM_CR1_CEN;
+}
+
+/* USART2 TX-only on PA2 (AF7), 1000000 8N1, as a test signal for the analyzer. */
+static void MX_USART2_UART_Init(void)
+{
+  GPIO_InitTypeDef gpio = {0};
+
+  __HAL_RCC_USART2_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  gpio.Pin = GPIO_PIN_2;
+  gpio.Mode = GPIO_MODE_AF_PP;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  gpio.Alternate = GPIO_AF7_USART2;
+  HAL_GPIO_Init(GPIOA, &gpio);
+
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 1000000;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK) Error_Handler();
 }
 
 /* USER CODE END 4 */

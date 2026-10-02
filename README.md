@@ -158,7 +158,7 @@ equipment. Short PB3-PB10 to PD0-PD7 (D0=PB3 ... D7=PB10):
   edges are jitter-free.
 - The table has two entries (all high, all low), so every channel is a 50%
   square wave at TIM3 rate / 2. The rate is set by `TIM3->ARR` in
-  `Test_PWM_Init` (ARR = 12 - 1 gives 20 MHz updates and a 10 MHz signal).
+  `Test_PWM_Init` (ARR = 12 - 1 gives 20 MHz updates and a 10 MHz signal; the firmware currently ships with ARR = 120 - 1, a 1 MHz signal).
   Asking for more (ARR = 6 - 1, a 20 MHz signal) does not work: the DMA cannot
   write GPIOB->BSRR that fast and the output comes out at 12 MHz (4 samples
   per period).
@@ -175,10 +175,27 @@ reserved word of every burst header, and `decode_burst.py` prints them once.
 
 ---
 
+## UART test output
+
+`main.c` also drives a UART test signal so the protocol decoder in the PC app
+can be checked with no other equipment. USART2 TX is on **PA2** (AF7), TX only,
+**1,000,000 baud, 8N1**. The main loop sends a single `U` (0x55, alternating
+bits) roughly every 2 ms. At 1 Mbaud a byte takes 10 us, so the blocking
+`HAL_UART_Transmit` costs nothing noticeable.
+
+Wire PA2 to any capture input (for example PD0) and select it as TX in the
+app's Protocol menu; the baud rate is detected automatically. Each bit is 1 us,
+about 48 samples at 48 MS/s.
+
+`MX_USART2_UART_Init()` runs after `Test_PWM_Init()` on purpose: the pin sweep
+drives PA0-PA10 as outputs and would otherwise disturb PA2.
+
+---
+
 ## Project Structure
 
     Core/               Application code
-      Src/main.c        Entry point, heartbeat, USB init, test signal, pin sweep
+      Src/main.c        Entry point, heartbeat, USB init, test signal, pin sweep, UART test output
       Src/burst.c       Ring capture, trigger, burst upload
       Inc/burst.h       Public API
       Src/acquisition.c Earlier edge-stream engine (not started by main)
@@ -200,9 +217,11 @@ reserved word of every burst header, and `decode_burst.py` prints them once.
 - [x] Edge compression and USB streaming
 - [x] Python chunk decoder
 - [x] Triggered burst capture (8 ch x 4.8 ms) with VCD export
-- [x] Built-in 10 MHz test signal on PB3-PB10
+- [x] Built-in test signal on PB3-PB10
+- [x] UART test output on PA2 (1 Mbaud) for protocol decoding
 - [ ] PC software integration (EmbeddedScope Qt6 app)
-- [ ] Protocol decoders (UART, SPI, I2C)
+- [x] UART protocol decoder with auto baud (PC app)
+- [ ] SPI, I2C protocol decoders
 - [ ] Selectable trigger channel, edge and pre/post-trigger split (currently fixed at PD0 rising)
 - [ ] FPGA hybrid V1 (iCE40 + STM32 USB bridge)
 - [ ] USB3 ASIC V2 (500 MS/s, 32 channels)

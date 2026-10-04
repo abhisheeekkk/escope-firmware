@@ -47,7 +47,7 @@ full source code transparency and no vendor lock-in.
     DMA1 Stream0 (double-buffer mode, 8 x 32 KB segments = 256 KB ring in D2 SRAM)
          |
          v
-    Edge trigger scan (main loop, PD0 rising by default)
+    Trigger scan (main loop): rising / falling / either edge on any channel, set by the PC
          |
          v
     Burst: ~4.8 ms window around the trigger (229,376 samples) sent over USB CDC
@@ -56,14 +56,14 @@ full source code transparency and no vendor lock-in.
     PC (decode_burst.py, or the EmbeddedScope Qt6 app)
 
 The sampler free-runs into the ring. The main loop scans each completed
-segment for the trigger edge; on a hit it lets the ring capture three more
-segments (post-trigger) and stops. The seven newest segments are then uploaded
+segment for the trigger; on a hit it lets the ring capture more segments
+(post-trigger) and stops. The seven newest segments are then uploaded
 and the ring is re-armed. If no edge appears for 500 ms it captures anyway and
 flags the frame as an auto trigger.
 
 Each burst is raw samples (one byte per sample, bit n = channel Dn), so nothing
 is lost to edge-rate limits inside the window: 20.83 ns resolution on all
-8 channels at once. The trigger sits at roughly 2.05 ms into the window.
+8 channels at once. In edge mode the trigger sits at roughly 2.05 ms into the window.
 
 `Src/acquisition.c` (the earlier continuous edge-stream engine) is still in the
 build but is not started by `main.c`.
@@ -100,6 +100,21 @@ Clone and build:
     cmake --build build -j$(nproc)
     sudo dfu-util -a 0 -s 0x08000000:leave -D build/escope-firmware.bin
 
+
+Three roles from the same source (`Core/Inc/board_config.h`; the options are mutually exclusive):
+
+| Build | What it runs |
+|-------|--------------|
+| default | scope + 1 MHz test signal + OLED counter on I2C4 (PD12 SCL / PD13 SDA); sends bursts to the PC |
+| `-DSCOPE_ONLY=ON` | scope + 1 MHz test signal only: no OLED/I2C and no UART output; flash this on the board that probes |
+| `-DSIG_GEN=ON` | signal generator only: 1 MHz test signal + OLED counter; no acquisition and USB is never started, so nothing is sent to the PC |
+
+    cmake -B build-scope -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCOPE_ONLY=ON
+    cmake -B build-gen   -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSIG_GEN=ON
+    cmake --build build-scope -j$(nproc)
+
+`FEATURE_UART_TEST` in the same header switches on a "Hello World" stream on
+PA2 (USART2 TX, 500 kbaud) in the default build.
 
 Output files in build/:
 
@@ -222,7 +237,7 @@ drives PA0-PA10 as outputs and would otherwise disturb PA2.
 - [ ] PC software integration (EmbeddedScope Qt6 app)
 - [x] UART protocol decoder with auto baud (PC app)
 - [ ] SPI, I2C protocol decoders
-- [ ] Selectable trigger channel, edge and pre/post-trigger split (currently fixed at PD0 rising)
+- [x] Trigger set from the PC over USB: any channel, rising/falling/either edge, plus the pre/post split and Auto/Normal mode (default PD0 rising, Auto)
 - [ ] FPGA hybrid V1 (iCE40 + STM32 USB bridge)
 - [ ] USB3 ASIC V2 (500 MS/s, 32 channels)
 
@@ -236,3 +251,37 @@ to just the area you care about -- firmware, protocol, PC software, or hardware.
 ## License
 
 GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE).
+
+---
+
+## Trigger command (PC to device)
+
+The PC configures the trigger by writing 8 bytes to the CDC port:
+
+    C7 01 mode ch 00 pre auto xor
+
+| Field | Meaning |
+|-------|---------|
+| mode | 0 rising edge, 1 falling edge, 2 either edge |
+| ch | trigger channel 0-7 |
+| pre | 0-6 segments (0.68 ms each) kept before the trigger segment; the burst is 7 segments |
+| auto | Auto-mode timeout in 10 ms units (50 = 500 ms); 0 = Normal mode: wait for a real trigger, never capture untriggered |
+| xor | XOR of the first 7 bytes |
+
+Invalid commands are ignored. The new setting takes effect at the next arm; on
+power-up the trigger is PD0 rising with 3 segments of pre-trigger in Auto mode
+(500 ms), like a scope's default. Each burst
+header's flags word reports the trigger in use (bits 8-9 mode, 10-12
+channel). Protocol triggers are not done on the device; the PC decodes
+protocols from the captured data.
+
+A second command releases the capture inputs' internal pull-downs, for
+open-drain buses such as I2C that bring their own pull-ups:
+
+    C7 02 mask 00 00 00 00 xor
+
+Bit n of `mask` set means PDn has no pull-down; all other inputs keep it. The
+power-up default is a pull-down on PD0-PD7 (mask 0).
+
+The OLED counter on I2C4 is updated through a non-blocking path (`Oled_Task`),
+so the main loop keeps scanning for the trigger while the display is written.

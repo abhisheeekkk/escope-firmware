@@ -43,6 +43,23 @@ add_compile_definitions(
     VDD_VALUE=3300U
 )
 
+# Role: -DSCOPE_ONLY=ON builds the scope-only firmware (no OLED/I2C, no UART output)
+# -DSIG_GEN=ON builds the signal generator (no acquisition, USB never started)
+option(SCOPE_ONLY "Scope + test signal only (no OLED, no UART)" OFF)
+option(SIG_GEN "Signal generator only (no acquisition, no USB)" OFF)
+if(SCOPE_ONLY AND SIG_GEN)
+    message(FATAL_ERROR "SCOPE_ONLY and SIG_GEN are mutually exclusive")
+endif()
+# A role chosen on the command line sets BOTH macros, so it overrides whatever
+# default is written in Core/Inc/board_config.h. With neither option the header's
+# defaults apply.
+if(SCOPE_ONLY)
+    add_compile_definitions(SCOPE_ONLY=1 SIG_GEN=0)
+endif()
+if(SIG_GEN)
+    add_compile_definitions(SIG_GEN=1 SCOPE_ONLY=0)
+endif()
+
 # ── Compile flags ─────────────────────────────────────────────────────────────
 add_compile_options(
     ${CPU_FLAGS}
@@ -113,6 +130,7 @@ set(CORE_SOURCES
     Core/Src/sysmem.c
     Core/Src/acquisition.c
     Core/Src/burst.c
+    Core/Src/oled.c
 )
 
 set(USB_APP_SOURCES

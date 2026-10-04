@@ -15,6 +15,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "acquisition.h"
+#include "board_config.h"
+#include "oled.h"
 #include "usbd_cdc_if.h"
 #include <stdio.h>
 
@@ -47,7 +49,13 @@ volatile uint32_t pin_sweep_result;
 
 /* USER CODE BEGIN PV */
 static uint32_t last_tx = 0;
+#if FEATURE_UART_TEST
 static uint32_t last_uart_tx = 0;
+#endif
+#if FEATURE_OLED_I2C
+static uint32_t last_oled = 0;
+static uint8_t  oled_present = 0;
+#endif
 static uint32_t last_blink = 0;
 extern volatile uint32_t dma_irq_count;
 extern uint32_t dma_half_count;
@@ -62,9 +70,13 @@ void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
+#if FEATURE_ACQUISITION
 static void MX_TIM2_Init(void);
+#endif
 static void Test_PWM_Init(void);
+#if FEATURE_UART_TEST
 static void MX_USART2_UART_Init(void);
+#endif
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -108,11 +120,28 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
+#if FEATURE_USB
   MX_USB_DEVICE_Init();
+#endif
+#if FEATURE_ACQUISITION
   MX_TIM2_Init();
+#endif
   /* USER CODE BEGIN 2 */
   Test_PWM_Init();
+#if FEATURE_UART_TEST
   MX_USART2_UART_Init();   /* after the pin sweep, which would otherwise disturb PA2 */
+#endif
+#if FEATURE_OLED_I2C
+  /* I2C4 (PD12 SCL / PD13 SDA) -> 0.91" SSD1306 OLED, after the pin sweep */
+  oled_present = Oled_Init();
+  if (oled_present) {
+    Oled_Print(0, 0, "HELLO WORLD");
+    Oled_Print(0, 1, "I2C4 ADDR 0X3C");
+    Oled_Print(0, 2, "SCL PD12 SDA PD13");
+    Oled_Print(0, 3, "MS");
+  }
+#endif
+#if FEATURE_ACQUISITION
   Burst_Init();
   /* Print DMA state immediately after start */
   {
@@ -129,6 +158,7 @@ int main(void)
     HAL_Delay(100);
   }
   Burst_Start();
+#endif
 
   /* USER CODE END 2 */
 
@@ -139,20 +169,36 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+#if FEATURE_ACQUISITION
     Burst_Process();
+#endif
     uint32_t now = HAL_GetTick();
 
     if (now - last_blink >= 500) {
       last_blink = now;
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     }
-    /* UART test pattern on PA2 (USART2 TX): a single 'U' (0x55, alternating
-     * bits) every 2 ms. One byte at 1 Mbaud is 10 us, so blocking is fine. */
+#if FEATURE_UART_TEST
+    /* UART test message on PA2 (USART2 TX), every 2 ms. 11 bytes at 500 kbaud
+     * is ~220 us, so blocking is fine. */
     if (now - last_uart_tx >= 2) {
       last_uart_tx = now;
-      static const uint8_t uart_msg = 'U';
-      HAL_UART_Transmit(&huart2, (uint8_t *)&uart_msg, 1, 10);
+      static const char uart_msg[] = "Hello World";
+      HAL_UART_Transmit(&huart2, (uint8_t *)uart_msg, sizeof(uart_msg) - 1, 10);
     }
+#endif
+#if FEATURE_OLED_I2C
+    /* OLED millisecond counter every 200 ms. The update goes out through the
+     * non-blocking I2C path (Oled_Task), so this loop keeps scanning for the
+     * capture trigger while the bus is busy. */
+    Oled_Task();
+    if (oled_present && !Oled_Busy() && now - last_oled >= 200) {
+      char num[8];
+      snprintf(num, sizeof(num), "%06lu", (unsigned long)(now % 1000000UL));
+      if (Oled_PrintAsync(3 * 6, 3, num))     /* after "MS " */
+        last_oled = now;
+    }
+#endif
 #if 0
     if (now - last_tx >= 1000) {
       last_tx = now;
@@ -232,6 +278,7 @@ void SystemClock_Config(void)
   }
 }
 
+#if FEATURE_ACQUISITION
 /**
   * @brief TIM2 Initialization Function
   * @param None
@@ -276,6 +323,8 @@ static void MX_TIM2_Init(void)
   /* USER CODE END TIM2_Init 2 */
 
 }
+
+#endif
 
 /**
   * Enable DMA controller clock
@@ -447,7 +496,8 @@ static void Test_PWM_Init(void)
   TIM3->CR1 = TIM_CR1_CEN;
 }
 
-/* USART2 TX-only on PA2 (AF7), 1000000 8N1, as a test signal for the analyzer. */
+#if FEATURE_UART_TEST
+/* USART2 TX-only on PA2 (AF7), 500000 8N1, as a test signal for the analyzer. */
 static void MX_USART2_UART_Init(void)
 {
   GPIO_InitTypeDef gpio = {0};
@@ -463,7 +513,7 @@ static void MX_USART2_UART_Init(void)
   HAL_GPIO_Init(GPIOA, &gpio);
 
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 1000000;
+  huart2.Init.BaudRate = 500000;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -472,6 +522,8 @@ static void MX_USART2_UART_Init(void)
   huart2.Init.OverSampling = UART_OVERSAMPLING_16;
   if (HAL_UART_Init(&huart2) != HAL_OK) Error_Handler();
 }
+
+#endif
 
 /* USER CODE END 4 */
 

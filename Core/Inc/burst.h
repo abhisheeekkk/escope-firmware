@@ -11,6 +11,8 @@ extern "C" {
 void Burst_Init(void);
 void Burst_Start(void);
 void Burst_Process(void);
+/* Feed bytes received from the PC (trigger configuration commands). */
+void Burst_Config_Rx(const uint8_t *data, uint32_t len);
 
 extern volatile uint32_t burst_count;   /* frames uploaded */
 extern volatile uint32_t burst_auto;    /* frames that were auto-triggered */

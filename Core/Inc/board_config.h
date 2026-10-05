@@ -55,7 +55,7 @@
  * rate also depends on the bus pull-ups and wiring, so check SCL on the scope.
  * Can also be set on the CMake command line: -DI2C_SPEED_KHZ=400 */
 #ifndef I2C_SPEED_KHZ
-#define I2C_SPEED_KHZ 400
+#define I2C_SPEED_KHZ 1000
 #endif
 #if I2C_SPEED_KHZ != 100 && I2C_SPEED_KHZ != 400 && I2C_SPEED_KHZ != 1000
 #error "I2C_SPEED_KHZ must be 100, 400 or 1000"

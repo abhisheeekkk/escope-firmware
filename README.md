@@ -172,10 +172,14 @@ is 400. It can also be set on the CMake command line, which overrides the header
 | 1000 | fast-mode plus | stronger SCL/SDA drive is enabled; the SSD1306 is only rated for 400, so a module may not work |
 
 Any other value stops the build with a message. The timing registers are worked
-out for the 120 MHz I2C4 kernel clock and each setting meets the I2C minimum low
-time, high time and data setup time for its mode (see the table in
-`Core/Src/oled.c`). The real rate also depends on the pull-ups and wiring, so
-measure SCL on the scope. The second OLED line shows the speed the firmware was
+out for the 120 MHz I2C4 kernel clock (see the table in `Core/Src/oled.c`). What
+is programmed is not what appears on the wire: the peripheral's input sync and
+the rise time on the pull-up add about 0.12 us to the high phase and 0.26 us to
+the low phase, which is 0.38 us of every clock period. That matters little at
+100 kHz but at 1 MHz it is more than a third of the period, so the programmed
+phases are shorter than the I2C minimums and the wire still meets them (at 1000
+kHz: 0.35 us high and 0.66 us low against minimums of 0.26 and 0.5 us). The real
+rate also depends on the pull-ups and wiring, so measure SCL on the scope. The second OLED line shows the speed the firmware was
 built with. A full OLED update (cursor write plus 36 data bytes, 46 bytes in total)
 takes about 4.2 ms at 100 kHz, about 1.1 ms at 400 kHz and about 0.5 ms at 1000 kHz.
 
@@ -185,8 +189,13 @@ every byte acknowledged and no cut-off transfers. The first 400 kHz setting
 (high phase 0.8 us) measured 390 kHz because the fixed overhead of the I2C
 peripheral (input sync and the rise time on the pull-up) is about 0.36 us, not
 0.3 us, so the high phase was shortened to 0.75 us. If SCL still reads off by
-more than a percent, adjust `OLED_I2C_TIMING` from the measured period instead of
-assuming the overhead; stronger pull-ups lower it.
+more than a percent, adjust `OLED_I2C_TIMING` from the measured high and low
+phases instead of assuming the overhead; stronger pull-ups lower it.
+
+At 1000 kHz the first setting measured 813 kHz (high 0.46 us, low 0.77 us on the
+wire against 0.33 and 0.52 programmed): the same +0.12 / +0.26 us overhead as at
+400 kHz. The high and low phases were programmed shorter to 0.225 and 0.40 us
+for a predicted 994 kHz.
 
 The clock is deliberately not 50% duty. The I2C specification needs the low phase
 longer than the high phase (at 400 kHz: low at least 1.3 us, high at least 0.6 us;

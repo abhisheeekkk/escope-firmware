@@ -11,15 +11,23 @@
 
 /* I2C4 timing for the speed chosen by I2C_SPEED_KHZ in board_config.h. The kernel
  * clock is PCLK4 = 120 MHz. TIMINGR = PRESC<<28 | SCLDEL<<20 | SDADEL<<16 |
- * SCLH<<8 | SCLL; a phase lasts (field + 1) ticks of (PRESC + 1) / 120 MHz. Each
- * setting meets the I2C minimum low time, high time and data setup time for its
- * mode; the period also includes ~0.15-0.3 us of input sync and rise time.
+ * SCLH<<8 | SCLL; a phase lasts (field + 1) ticks of (PRESC + 1) / 120 MHz. On the
+ * wire each phase is longer than programmed (see below), and each setting meets the
+ * I2C minimum low time, high time and data setup time for its mode as measured on
+ * the wire.
  *
  *   100 kHz  PRESC 11 (100 ns): low 5.4 us, high 4.3 us, setup 400 ns
  *   400 kHz  PRESC  2 ( 25 ns): low 1.4 us, high 0.75 us, setup 125 ns
  *                                (the first try, high 0.8 us, measured 390 kHz: the
  *                                 fixed overhead is ~0.36 us, not 0.3)
- *  1000 kHz  PRESC  0 (8.3 ns): low 0.52 us, high 0.33 us, setup  67 ns */
+ *  1000 kHz  PRESC  0 (8.3 ns): low 0.40 us, high 0.225 us, setup  67 ns
+ *
+ * What is programmed is not what appears on the wire: the peripheral's input sync
+ * and the rise time on the pull-up add about +0.12 us to the high phase and +0.26 us
+ * to the low phase (measured at 400 kHz and again at 1000 kHz, same split). So the
+ * wire sees high 0.35 us and low 0.66 us at 1000 kHz, still above the 0.26 / 0.5 us
+ * minimums. The first 1000 kHz setting (programmed 0.33 / 0.52 us) measured only
+ * 813 kHz because it ignored this overhead. */
 #if I2C_SPEED_KHZ == 100
 #define OLED_I2C_TIMING  0xB0322A35U
 #define OLED_PIN_SPEED   GPIO_SPEED_FREQ_LOW
@@ -29,7 +37,7 @@
 #define OLED_PIN_SPEED   GPIO_SPEED_FREQ_MEDIUM
 #define OLED_FM_PLUS     0
 #else   /* 1000 */
-#define OLED_I2C_TIMING  0x0071273DU
+#define OLED_I2C_TIMING  0x00711A2FU
 #define OLED_PIN_SPEED   GPIO_SPEED_FREQ_HIGH
 #define OLED_FM_PLUS     1
 #endif

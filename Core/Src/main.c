@@ -29,6 +29,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define I2C_SPEED_STR_(x) #x
+#define I2C_SPEED_STR_X(x) I2C_SPEED_STR_(x)
+#define I2C_SPEED_STR I2C_SPEED_STR_X(I2C_SPEED_KHZ)
 /* The LED shows which firmware a board is running (see board_config.h):
  * toggling every 500 ms = it has USB (scope roles), every 100 ms = signal
  * generator (no USB, so it will never appear on the PC). */
@@ -56,7 +59,9 @@ UART_HandleTypeDef huart2;
 volatile uint32_t pin_sweep_result;
 
 /* USER CODE BEGIN PV */
-static uint32_t last_tx = 0;
+#if 0
+static uint32_t last_tx = 0;   /* only used by the disabled status message below */
+#endif
 #if FEATURE_UART_TEST
 static uint32_t last_uart_tx = 0;
 #endif
@@ -144,7 +149,7 @@ int main(void)
   oled_present = Oled_Init();
   if (oled_present) {
     Oled_Print(0, 0, "HELLO WORLD");
-    Oled_Print(0, 1, "I2C4 ADDR 0X3C");
+    Oled_Print(0, 1, "I2C " I2C_SPEED_STR "K ADDR 0X3C");
     Oled_Print(0, 2, "SCL PD12 SDA PD13");
     Oled_Print(0, 3, "MS");
   }

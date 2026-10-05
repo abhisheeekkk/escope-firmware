@@ -43,6 +43,15 @@ add_compile_definitions(
     VDD_VALUE=3300U
 )
 
+# OLED I2C speed in kHz: 100, 400 or 1000. Empty = the default in board_config.h
+set(I2C_SPEED_KHZ "" CACHE STRING "OLED I2C speed in kHz: 100, 400 or 1000")
+if(I2C_SPEED_KHZ)
+    if(NOT I2C_SPEED_KHZ MATCHES "^(100|400|1000)$")
+        message(FATAL_ERROR "I2C_SPEED_KHZ must be 100, 400 or 1000 (got ${I2C_SPEED_KHZ})")
+    endif()
+    add_compile_definitions(I2C_SPEED_KHZ=${I2C_SPEED_KHZ})
+endif()
+
 # Role: -DSCOPE_ONLY=ON builds the scope-only firmware (no OLED/I2C, no UART output)
 # -DSIG_GEN=ON builds the signal generator (no acquisition, USB never started)
 option(SCOPE_ONLY "Scope + test signal only (no OLED, no UART)" OFF)

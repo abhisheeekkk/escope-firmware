@@ -9,6 +9,31 @@
 #if FEATURE_OLED_I2C
 #include <string.h>
 
+/* I2C4 timing for the speed chosen by I2C_SPEED_KHZ in board_config.h. The kernel
+ * clock is PCLK4 = 120 MHz. TIMINGR = PRESC<<28 | SCLDEL<<20 | SDADEL<<16 |
+ * SCLH<<8 | SCLL; a phase lasts (field + 1) ticks of (PRESC + 1) / 120 MHz. Each
+ * setting meets the I2C minimum low time, high time and data setup time for its
+ * mode; the period also includes ~0.15-0.3 us of input sync and rise time.
+ *
+ *   100 kHz  PRESC 11 (100 ns): low 5.4 us, high 4.3 us, setup 400 ns
+ *   400 kHz  PRESC  2 ( 25 ns): low 1.4 us, high 0.75 us, setup 125 ns
+ *                                (the first try, high 0.8 us, measured 390 kHz: the
+ *                                 fixed overhead is ~0.36 us, not 0.3)
+ *  1000 kHz  PRESC  0 (8.3 ns): low 0.52 us, high 0.33 us, setup  67 ns */
+#if I2C_SPEED_KHZ == 100
+#define OLED_I2C_TIMING  0xB0322A35U
+#define OLED_PIN_SPEED   GPIO_SPEED_FREQ_LOW
+#define OLED_FM_PLUS     0
+#elif I2C_SPEED_KHZ == 400
+#define OLED_I2C_TIMING  0x20421D37U
+#define OLED_PIN_SPEED   GPIO_SPEED_FREQ_MEDIUM
+#define OLED_FM_PLUS     0
+#else   /* 1000 */
+#define OLED_I2C_TIMING  0x0071273DU
+#define OLED_PIN_SPEED   GPIO_SPEED_FREQ_HIGH
+#define OLED_FM_PLUS     1
+#endif
+
 static I2C_HandleTypeDef hi2c4;
 static uint8_t oled_ok;
 
@@ -60,18 +85,12 @@ uint8_t Oled_Init(void)
   gpio.Pin = GPIO_PIN_12 | GPIO_PIN_13;           /* SCL, SDA */
   gpio.Mode = GPIO_MODE_AF_OD;
   gpio.Pull = GPIO_PULLUP;                        /* module has its own pull-ups too */
-  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  gpio.Speed = OLED_PIN_SPEED;
   gpio.Alternate = GPIO_AF4_I2C4;
   HAL_GPIO_Init(GPIOD, &gpio);
 
   hi2c4.Instance = I2C4;
-  /* 100 kHz standard mode from the clock tree: I2C4 kernel clock = PCLK4 = 120 MHz.
-   * PRESC 11 -> 100 ns tick; SCLL 53 (54 ticks = 5.4 us, min 4.7), SCLH 42
-   * (43 ticks = 4.3 us, min 4.0) -> 9.7 us + ~0.3 us of sync/rise overhead = 10 us.
-   * An earlier version scaled these counts up to match one measurement; that was
-   * wrong and gave 83 kHz on a board running the nominal clock. If the measured
-   * SCL is off, check the clock first; do not just rescale. */
-  hi2c4.Init.Timing = 0xB0322A35;
+  hi2c4.Init.Timing = OLED_I2C_TIMING;
   hi2c4.Init.OwnAddress1 = 0;
   hi2c4.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c4.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -80,6 +99,9 @@ uint8_t Oled_Init(void)
   hi2c4.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
   if (HAL_I2C_Init(&hi2c4) != HAL_OK) return 0;
   HAL_I2CEx_ConfigAnalogFilter(&hi2c4, I2C_ANALOGFILTER_ENABLE);
+#if OLED_FM_PLUS
+  HAL_I2CEx_EnableFastModePlus(I2C_FASTMODEPLUS_I2C4);   /* stronger SCL/SDA drive for 1 MHz */
+#endif
 
   if (HAL_I2C_IsDeviceReady(&hi2c4, OLED_I2C_ADDR_7BIT << 1, 3, 20) != HAL_OK) return 0;
 
@@ -122,7 +144,7 @@ void Oled_Print(uint8_t x, uint8_t page, const char *s)
   uint16_t n = 0;
 
   if (page >= OLED_PAGES) return;
-  for (; *s && n + 6 <= sizeof(buf) && x + n + 6 <= OLED_WIDTH; s++) {
+  for (; *s && (size_t)(n + 6) <= sizeof(buf) && x + n + 6 <= OLED_WIDTH; s++) {
     char c = *s;
     if (c >= 'a' && c <= 'z') c -= 32;
     if (c < ' ' || c > 'Z') c = '?';

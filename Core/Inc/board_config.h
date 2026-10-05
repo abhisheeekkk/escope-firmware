@@ -3,8 +3,8 @@
 
 /* One firmware, three roles. Pick one with a CMake option (-DSCOPE_ONLY=ON or
  * -DSIG_GEN=ON), which overrides the defaults below, or change the defaults. A
- * build with no option uses the defaults (currently SCOPE_ONLY). The two roles
- * are mutually exclusive.
+ * build with no option uses the defaults set below, so check them before
+ * flashing. The two roles are mutually exclusive.
  *
  *   both 0        scope + signal generators: captures and sends bursts to the PC,
  *                 and also drives the test PWM and the OLED counter
@@ -20,10 +20,10 @@
  * LED: toggles every 500 ms when the board has USB (scope roles),
  * every 100 ms in SIG_GEN, so the running firmware can be told apart. */
 #ifndef SCOPE_ONLY
-#define SCOPE_ONLY 1
+#define SCOPE_ONLY 0
 #endif
 #ifndef SIG_GEN
-#define SIG_GEN 0
+#define SIG_GEN 1
 #endif
 
 #if SCOPE_ONLY && SIG_GEN
@@ -45,5 +45,20 @@
 #endif
 
 #define FEATURE_UART_TEST   0     /* set to 1 to send "Hello World" on PA2 (USART2 TX, 500 kbaud) */
+
+/* OLED I2C bus speed in kHz: 100, 400 or 1000.
+ *   100   standard mode
+ *   400   fast mode
+ *   1000  fast-mode plus (stronger SCL/SDA drive is enabled). The SSD1306 is only
+ *         rated for 400 kHz, so a module may not work at 1000.
+ * The timing registers are worked out for the 120 MHz I2C4 kernel clock; the real
+ * rate also depends on the bus pull-ups and wiring, so check SCL on the scope.
+ * Can also be set on the CMake command line: -DI2C_SPEED_KHZ=400 */
+#ifndef I2C_SPEED_KHZ
+#define I2C_SPEED_KHZ 400
+#endif
+#if I2C_SPEED_KHZ != 100 && I2C_SPEED_KHZ != 400 && I2C_SPEED_KHZ != 1000
+#error "I2C_SPEED_KHZ must be 100, 400 or 1000"
+#endif
 
 #endif

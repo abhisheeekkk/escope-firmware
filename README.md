@@ -145,7 +145,7 @@ Three roles from the same source (`Core/Inc/board_config.h`; the two options are
 | scope + generator (both defaults 0) | everything: sends bursts to the PC and also drives the test signal and the OLED | toggles every 500 ms |
 
 A role chosen with a CMake option overrides the defaults in the header. A build
-with no option uses the header defaults (currently scope only). If a board runs
+with no option uses the header defaults (check them before flashing). If a board runs
 fine but never shows up in `lsusb` or `/dev/ttyACM*`, check its LED: a fast blink
 means the signal generator firmware is on it.
 
@@ -156,6 +156,47 @@ Use a separate build folder per role so the binaries do not overwrite each other
     cmake -B build-gen   -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSIG_GEN=ON
     cmake --build build-scope -j$(nproc)
     sudo dfu-util -a 0 -s 0x08000000:leave -D build-scope/escope-firmware.bin
+
+### OLED I2C speed
+
+`I2C_SPEED_KHZ` in `Core/Inc/board_config.h` sets the I2C4 bus speed of the OLED
+(signal generator and scope + generator roles). Use 100, 400 or 1000; the default
+is 400. It can also be set on the CMake command line, which overrides the header:
+
+    cmake -B build-gen -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSIG_GEN=ON -DI2C_SPEED_KHZ=100
+
+| Value | Mode | Notes |
+|-------|------|-------|
+| 100 | standard | |
+| 400 | fast | the SSD1306 is rated for this |
+| 1000 | fast-mode plus | stronger SCL/SDA drive is enabled; the SSD1306 is only rated for 400, so a module may not work |
+
+Any other value stops the build with a message. The timing registers are worked
+out for the 120 MHz I2C4 kernel clock and each setting meets the I2C minimum low
+time, high time and data setup time for its mode (see the table in
+`Core/Src/oled.c`). The real rate also depends on the pull-ups and wiring, so
+measure SCL on the scope. The second OLED line shows the speed the firmware was
+built with. A full OLED update (cursor write plus 36 data bytes, 46 bytes in total)
+takes about 4.2 ms at 100 kHz, about 1.1 ms at 400 kHz and about 0.5 ms at 1000 kHz.
+
+Measured at 400 kHz on the scope board: SCL high about 0.87 us and low about 1.67 us
+(a period of about 2.5 us, roughly 398 kHz); 50 of 50 OLED updates decoded with
+every byte acknowledged and no cut-off transfers. The first 400 kHz setting
+(high phase 0.8 us) measured 390 kHz because the fixed overhead of the I2C
+peripheral (input sync and the rise time on the pull-up) is about 0.36 us, not
+0.3 us, so the high phase was shortened to 0.75 us. If SCL still reads off by
+more than a percent, adjust `OLED_I2C_TIMING` from the measured period instead of
+assuming the overhead; stronger pull-ups lower it.
+
+The clock is deliberately not 50% duty. The I2C specification needs the low phase
+longer than the high phase (at 400 kHz: low at least 1.3 us, high at least 0.6 us;
+standard mode 4.7 us and 4.0 us; fast-mode plus 0.5 us and 0.26 us). The bus is
+open-drain: a device pulls a line low hard and fast, but it only rises through the
+pull-up resistor, which is slow. All the data work happens while SCL is low (the
+slave may take up to 0.9 us after SCL falls to put its bit or ACK on SDA, SDA has
+to settle through its own slow rise, and it needs 100 ns of setup before SCL rises),
+while the high phase only has to let the receiver sample. A 50% clock at 400 kHz
+would be 1.25 us low, below the minimum, so about 35% high is the correct result.
 
 `FEATURE_UART_TEST` in the same header switches on a "Hello World" stream on
 PA2 (USART2 TX, 500 kbaud) in the default build.

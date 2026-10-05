@@ -3,7 +3,7 @@
 
 #include "main.h"
 
-/* SSD1306 128x32 (0.91") OLED on I2C4: SCL = PD12, SDA = PD13 (AF4), 100 kHz.
+/* SSD1306 128x32 (0.91") OLED on I2C4: SCL = PD12, SDA = PD13 (AF4), the speed set by I2C_SPEED_KHZ in board_config.h.
  * The module's 7-bit address is 0x3C (some boards use 0x3D). */
 #define OLED_I2C_ADDR_7BIT  0x3C
 #define OLED_WIDTH          128

@@ -2,9 +2,11 @@
 #define BOARD_CONFIG_H
 
 /* One firmware, three roles. Pick one with a CMake option (-DSCOPE_ONLY=ON or
- * -DSIG_GEN=ON), or by changing the defaults below. They are mutually exclusive.
+ * -DSIG_GEN=ON), which overrides the defaults below, or change the defaults. A
+ * build with no option uses the defaults (currently SCOPE_ONLY). The two roles
+ * are mutually exclusive.
  *
- *   (neither)     scope + signal generators: captures and sends bursts to the PC,
+ *   both 0        scope + signal generators: captures and sends bursts to the PC,
  *                 and also drives the test PWM and the OLED counter
  *   SCOPE_ONLY=1  scope + the built-in test signal; no I2C/OLED, no UART output.
  *                 Flash this on the board that does the probing.
@@ -13,12 +15,15 @@
  *                 nothing is sent to the PC. Use it as the target board that is
  *                 probed by a SCOPE_ONLY board.
  *
- * The PB3-PB10 test signal (1 MHz) is generated in every role. */
+ * The PB3-PB10 test signal (1 MHz) is generated in every role.
+ *
+ * LED: toggles every 500 ms when the board has USB (scope roles),
+ * every 100 ms in SIG_GEN, so the running firmware can be told apart. */
 #ifndef SCOPE_ONLY
-#define SCOPE_ONLY 0
+#define SCOPE_ONLY 1
 #endif
 #ifndef SIG_GEN
-#define SIG_GEN 1
+#define SIG_GEN 0
 #endif
 
 #if SCOPE_ONLY && SIG_GEN

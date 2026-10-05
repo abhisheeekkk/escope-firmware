@@ -6,11 +6,12 @@ prints per-channel statistics and saves the raw samples plus a VCD file that
 GTKWave / PulseView can open.
 
 Frame (little-endian):
-  [0]     0xE7 magic          [1]     version (1)
+  [0]     0xE7 magic          [1]     version (2; version 1 had a 24 byte header)
   [2..3]  flags (bit0 = auto trigger: no real edge was seen)
   [4..7]  sample rate (Hz)    [8..11] number of samples that follow
   [12..15] trigger sample index within the data
   [16..19] frame sequence     [20..23] reserved
+  [24..31] t0_ns: device time of sample 0 (version 2 only)
   then num_samples bytes, bit n = channel Dn
 """
 
@@ -21,7 +22,8 @@ import sys
 import serial
 
 MAGIC = 0xE7
-HDR = 24
+HDR_V1 = 24
+HDR_V2 = 32
 MAX_SAMPLES = 1 << 20
 
 ap = argparse.ArgumentParser()
@@ -102,6 +104,7 @@ print("Waiting for bursts (Ctrl+C to stop)\n")
 
 buf = bytearray()
 got = 0
+last_t0 = None
 try:
     while True:
         chunk = ser.read(65536)
@@ -115,12 +118,14 @@ try:
                 break
             if i:
                 del buf[:i]
-            if len(buf) < HDR:
+            if len(buf) < HDR_V2:
                 break
             (magic, ver, flags, rate, nsamp, trig, seq, rsv) = struct.unpack_from('<BBHIIIII', buf, 0)
-            if ver != 1 or rate == 0 or nsamp == 0 or nsamp > MAX_SAMPLES:
+            if ver not in (1, 2) or rate == 0 or nsamp == 0 or nsamp > MAX_SAMPLES:
                 del buf[:1]                 # false magic, resync
                 continue
+            HDR = HDR_V2 if ver == 2 else HDR_V1
+            t0_ns = struct.unpack_from('<Q', buf, 24)[0] if ver == 2 else None
             if len(buf) < HDR + nsamp:
                 break                       # wait for the rest
             data = bytes(buf[HDR:HDR + nsamp])
@@ -133,6 +138,10 @@ try:
                 print("Pin sweep (pins that cannot be driven low+high): "
                       f"{', '.join(pa + pb) or 'none'}")
             print(f"--- Burst seq={seq}{' (AUTO TRIGGER, no edge seen)' if flags & 1 else ''} ---")
+            if t0_ns is not None:
+                gap = f", {(t0_ns - last_t0) / 1e6:.3f} ms after the previous burst" if last_t0 is not None else ""
+                print(f"  device time of sample 0: {t0_ns / 1e9:.6f} s{gap}")
+                last_t0 = t0_ns
             analyze(data, rate, trig)
             if args.save:
                 name = f"{args.out}_{seq:04d}"

@@ -75,16 +75,51 @@ build but is not started by `main.c`.
 All multi-byte fields little-endian:
 
     Byte 0:       0xE7        magic
-    Byte 1:       version     1
-    Byte 2-3:     flags       bit 0 = auto trigger (no real edge seen)
+    Byte 1:       version     2 (version 1 had a 24 byte header, no device time)
+    Byte 2-3:     flags       bit 0 = auto trigger (no real edge seen), bits 8-9 trigger mode, bits 10-12 trigger channel
     Byte 4-7:     sample rate in Hz (48,000,000)
     Byte 8-11:    number of samples that follow
     Byte 12-15:   trigger sample index within the data
     Byte 16-19:   frame sequence number
     Byte 20-23:   reserved (currently carries the boot-time GPIO pin sweep result)
+    Byte 24-31:   t0_ns, device time of sample 0 of this burst (version 2)
     Then num_samples bytes: bit n = channel Dn (PD0-PD7)
 
 Time in ns = sample_index * 125 / 6 (20.83 ns per sample).
+
+### Device clock
+
+The sampler is stopped while a burst is uploaded, so the time between bursts is
+not in the data. To let the PC place bursts exactly, TIM5 runs as a free-running
+240 MHz counter that is never stopped (32 bit, extended to 64 bit in its update
+interrupt every 17.9 s). The value is latched when the sampler is armed. TIM2
+raises one sample every 5 timer ticks, so sample i is taken at exactly
+arm_ticks + 5 * (i + 1) and the header's `t0_ns` is the device time of sample 0
+(1 tick = 25/6 ns). The PC then places every burst by `t0_ns` instead of by when
+it happened to arrive over USB, which removes the 1 ms-level arrival jitter and
+gives exact gaps between bursts. The clock restarts at power-up; if the PC sees
+it go backwards it continues the timeline from the end of the previous burst.
+
+### Checking the timing
+
+Measured on a two-board setup (a scope board probing the generator board's I2C
+updates, which repeat every 200 ms):
+
+- Precision: the captures of every second update (400 ms of generator time) were
+  0.399995 to 0.399996 s apart, a standard deviation of 0.43 us over 74 captures
+  (limited by the 1 us resolution of the decoder log). With arrival-time
+  placement this wobbled by about 1 ms.
+- Relative clock error: comparing the scope timeline with the generator's own
+  millisecond counter shown on the OLED gave 10.6 ppm; the spacing of the captures
+  gave 10.7 ppm. That is the difference between two independent crystals.
+- Absolute accuracy needs an independent reference (a frequency counter on the
+  1 MHz test output, an oscilloscope, or a 1 PPS source); two boards can only
+  show how much they disagree. The timer value is read just before the sampler
+  starts, a constant offset of tens of nanoseconds that is the same for every
+  burst, so it does not move bursts relative to each other.
+
+`python3 scripts/decode_burst.py /dev/ttyACM0 -n 20` prints the device time of each
+burst and the gap to the previous one.
 
 ## Build
 
@@ -101,22 +136,31 @@ Clone and build:
     sudo dfu-util -a 0 -s 0x08000000:leave -D build/escope-firmware.bin
 
 
-Three roles from the same source (`Core/Inc/board_config.h`; the options are mutually exclusive):
+Three roles from the same source (`Core/Inc/board_config.h`; the two options are mutually exclusive):
 
-| Build | What it runs |
-|-------|--------------|
-| default | scope + 1 MHz test signal + OLED counter on I2C4 (PD12 SCL / PD13 SDA); sends bursts to the PC |
-| `-DSCOPE_ONLY=ON` | scope + 1 MHz test signal only: no OLED/I2C and no UART output; flash this on the board that probes |
-| `-DSIG_GEN=ON` | signal generator only: 1 MHz test signal + OLED counter; no acquisition and USB is never started, so nothing is sent to the PC |
+| Role | What it runs | LED |
+|------|--------------|-----|
+| scope only (`-DSCOPE_ONLY=ON`) | scope + 1 MHz test signal; no OLED/I2C, no UART output. Flash this on the board that probes. | toggles every 500 ms |
+| signal generator (`-DSIG_GEN=ON`) | 1 MHz test signal + OLED counter on I2C4 (PD12 SCL / PD13 SDA). No acquisition and USB is never started, so the board never appears on the PC. | toggles every 100 ms |
+| scope + generator (both defaults 0) | everything: sends bursts to the PC and also drives the test signal and the OLED | toggles every 500 ms |
+
+A role chosen with a CMake option overrides the defaults in the header. A build
+with no option uses the header defaults (currently scope only). If a board runs
+fine but never shows up in `lsusb` or `/dev/ttyACM*`, check its LED: a fast blink
+means the signal generator firmware is on it.
+
+Use a separate build folder per role so the binaries do not overwrite each other
+(any folder named `build*` is git-ignored):
 
     cmake -B build-scope -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCOPE_ONLY=ON
     cmake -B build-gen   -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSIG_GEN=ON
     cmake --build build-scope -j$(nproc)
+    sudo dfu-util -a 0 -s 0x08000000:leave -D build-scope/escope-firmware.bin
 
 `FEATURE_UART_TEST` in the same header switches on a "Hello World" stream on
 PA2 (USART2 TX, 500 kbaud) in the default build.
 
-Output files in build/:
+Output files in the build folder:
 
     escope-firmware.bin   -- flash this
     escope-firmware.hex   -- alternative format

@@ -18,13 +18,21 @@
  *   deliberately not done here: the PC decodes protocols from the captured data.
  *
  * USB frame (little-endian):
- *   [0]     0xE7 magic          [1]     version (1)
+ *   [0]     0xE7 magic          [1]     version (2; version 1 had a 24 byte header)
  *   [2..3]  flags: bit0 = auto trigger (no real edge seen); bits 8-9 trigger
            mode, bits 10-12 trigger channel
  *   [4..7]  sample rate (Hz)    [8..11] number of samples that follow
  *   [12..15] trigger sample index within the data
- *   [16..19] frame sequence     [20..23] reserved
+ *   [16..19] frame sequence     [20..23] reserved (pin sweep result)
+ *   [24..31] t0_ns: device time (ns since the timestamp timer started) of
+ *            sample 0 of this burst
  *   then num_samples raw bytes, bit n = channel Dn
+ *
+ * Device clock: TIM5 free-runs at 240 MHz (32 bit, extended to 64 bit in its
+ * update interrupt). TIM2 raises one sample every 5 ticks, so once the timer
+ * value at arm time is known, the time of every sample is exact: sample i is
+ * taken at arm_ticks + 5 * (i + 1). Bursts are separated by gaps the device
+ * does not sample (USB upload), so t0_ns is what lets the PC place them.
  */
 #include "burst.h"
 #include "usbd_cdc_if.h"
@@ -43,6 +51,9 @@ extern USBD_HandleTypeDef hUsbDeviceFS;
 
 #define FLAG_AUTO       0x0001U
 
+#define TIMER_HZ        240000000U              /* TIM5 and TIM2 kernel clock */
+#define TICKS_PER_SAMPLE (TIMER_HZ / SAMPLE_RATE_HZ)   /* 5 */
+
 static uint8_t burst_buf[NUM_SEGS][SEG_BYTES]
     __attribute__((section(".dma_buffers")))
     __attribute__((aligned(32)));
@@ -56,7 +67,9 @@ typedef struct __attribute__((packed)) {
     uint32_t trigger_index;
     uint32_t seq;
     uint32_t reserved;
+    uint64_t t0_ns;         /* device time of sample 0 of this burst */
 } burst_hdr_t;
+_Static_assert(sizeof(burst_hdr_t) == 32, "burst header must be 32 bytes (see the frame description above)");
 
 extern volatile uint32_t pin_sweep_result;   /* main.c: GPIO pin sweep */
 
@@ -123,6 +136,49 @@ static void seg_complete(DMA_HandleTypeDef *h)
     }
 }
 
+/* ---- Device clock --------------------------------------------------------
+ * TIM5 is a 32 bit counter at 240 MHz: it wraps every 17.9 s, so its update
+ * interrupt counts the wraps and ts_ticks() returns a 64 bit tick count that
+ * never wraps in practice. It is never stopped, so the time keeps running
+ * while bursts are being uploaded. */
+static volatile uint32_t ts_hi;
+static uint64_t arm_ticks;                  /* clock value when the sampler was started */
+
+void TIM5_IRQHandler(void)
+{
+    if (TIM5->SR & TIM_SR_UIF) {
+        TIM5->SR = ~TIM_SR_UIF;
+        ts_hi++;
+    }
+}
+
+static void timestamp_init(void)
+{
+    __HAL_RCC_TIM5_CLK_ENABLE();
+    TIM5->CR1  = 0;
+    TIM5->PSC  = 0;
+    TIM5->ARR  = 0xFFFFFFFFU;
+    TIM5->EGR  = TIM_EGR_UG;
+    TIM5->SR   = 0;
+    TIM5->DIER = TIM_DIER_UIE;
+    HAL_NVIC_SetPriority(TIM5_IRQn, 3, 0);
+    HAL_NVIC_EnableIRQ(TIM5_IRQn);
+    TIM5->CR1  = TIM_CR1_CEN;
+}
+
+static uint64_t ts_ticks(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    uint32_t hi  = ts_hi;
+    uint32_t cnt = TIM5->CNT;
+    /* The counter wrapped but its interrupt has not run yet (interrupts are
+     * off): count the wrap here. A just-wrapped counter reads small. */
+    if ((TIM5->SR & TIM_SR_UIF) && cnt < 0x80000000U) hi++;
+    __set_PRIMASK(primask);
+    return ((uint64_t)hi << 32) | cnt;
+}
+
 static void arm(void)
 {
     DMA_Stream_TypeDef *s = (DMA_Stream_TypeDef *)hdma_tim2_up.Instance;
@@ -155,6 +211,7 @@ static void arm(void)
     TIM2->EGR = TIM_EGR_UG;
     TIM2->SR  = 0;
     TIM2->DIER |= TIM_DIER_UDE;
+    arm_ticks  = ts_ticks();                /* sample i is taken at arm_ticks + 5 * (i + 1) */
     TIM2->CR1  |= TIM_CR1_CEN;
 
     state = ST_ARMED;
@@ -162,6 +219,8 @@ static void arm(void)
 
 void Burst_Init(void)
 {
+    timestamp_init();
+
     /* D2 SRAM clocks are off at reset; burst_buf lives in RAM_D2 */
     __HAL_RCC_D2SRAM1_CLK_ENABLE();
     __HAL_RCC_D2SRAM2_CLK_ENABLE();
@@ -233,7 +292,7 @@ static void begin_send(void)
     uint32_t start = first * SEG_BYTES;
 
     hdr.magic       = 0xE7;
-    hdr.version     = 1;
+    hdr.version     = 2;
     hdr.flags       = trig_flags | ((uint16_t)cfg.mode << 8) | ((uint16_t)cfg.ch << 10);
     hdr.sample_rate = SAMPLE_RATE_HZ;
     hdr.num_samples = SEND_SEGS * SEG_BYTES;
@@ -241,6 +300,9 @@ static void begin_send(void)
                         ? trig_abs - start : 0;
     hdr.seq         = frame_seq++;
     hdr.reserved    = pin_sweep_result;
+    /* Device time of sample 0 of this burst: the sampler started at arm_ticks and
+     * takes one sample every TICKS_PER_SAMPLE ticks. 1 tick = 25/6 ns at 240 MHz. */
+    hdr.t0_ns       = (arm_ticks + (uint64_t)TICKS_PER_SAMPLE * ((uint64_t)start + 1U)) * 25U / 6U;
 
     send_first_seg = first;
     send_step = 0;

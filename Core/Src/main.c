@@ -29,6 +29,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* The LED shows which firmware a board is running (see board_config.h):
+ * toggling every 500 ms = it has USB (scope roles), every 100 ms = signal
+ * generator (no USB, so it will never appear on the PC). */
+#if FEATURE_USB
+#define LED_BLINK_MS 500
+#else
+#define LED_BLINK_MS 100
+#endif
 
 /* USER CODE END PD */
 
@@ -174,7 +182,7 @@ int main(void)
 #endif
     uint32_t now = HAL_GetTick();
 
-    if (now - last_blink >= 500) {
+    if (now - last_blink >= LED_BLINK_MS) {
       last_blink = now;
       HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     }

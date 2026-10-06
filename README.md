@@ -307,6 +307,9 @@ drives PA0-PA10 as outputs and would otherwise disturb PA2.
       Src/main.c        Entry point, heartbeat, USB init, test signal, pin sweep, UART test output
       Src/burst.c       Ring capture, trigger, burst upload
       Inc/burst.h       Public API
+      Src/can_gen.c     FDCAN1 test traffic and DroneCAN node ID server (SIG_GEN role)
+      Inc/can_gen.h     Its public API
+      Inc/board_config.h  Role and feature selection (SCOPE_ONLY, SIG_GEN, CAN, I2C speed)
       Src/acquisition.c Earlier edge-stream engine (not started by main)
       Inc/acquisition.h Its public API
     USB_DEVICE/         USB CDC stack (CubeMX generated)
@@ -330,7 +333,9 @@ drives PA0-PA10 as outputs and would otherwise disturb PA2.
 - [x] UART test output on PA2 (1 Mbaud) for protocol decoding
 - [ ] PC software integration (EmbeddedScope Qt6 app)
 - [x] UART protocol decoder with auto baud (PC app)
-- [ ] SPI, I2C protocol decoders
+- [x] I2C protocol decoder (PC app)
+- [x] CAN protocol decoder (PC app) with a CAN test node and DroneCAN node ID server in the SIG_GEN firmware
+- [ ] SPI protocol decoder
 - [x] Trigger set from the PC over USB: any channel, rising/falling/either edge, plus the pre/post split and Auto/Normal mode (default PD0 rising, Auto)
 - [ ] FPGA hybrid V1 (iCE40 + STM32 USB bridge)
 - [ ] USB3 ASIC V2 (500 MS/s, 32 channels)
@@ -379,3 +384,39 @@ power-up default is a pull-down on PD0-PD7 (mask 0).
 
 The OLED counter on I2C4 is updated through a non-blocking path (`Oled_Task`),
 so the main loop keeps scanning for the trigger while the display is written.
+
+## CAN node (SIG_GEN role)
+
+`FEATURE_CAN_TEST` (enabled in the `SIG_GEN` role) runs FDCAN1 on PD0 (RX) and PD1
+(TX), alternate function 9, with the kernel clock taken from the 8 MHz HSE so the bit
+timing is exact. PD0 and PD1 are scope inputs in the other roles, so CAN is only built
+into `SIG_GEN`. The board is a classic CAN 2.0A/B node; CAN FD is not used.
+
+**Wiring.** The pins are 3.3 V logic. Connect a 3.3 V CAN transceiver: PD1 to TXD, PD0
+to RXD, CANH and CANL to the bus, common ground, 120 ohm termination at each end of the
+bus. Probe the transceiver RXD with a scope channel to see the bus (including ACKs).
+Never connect a scope channel to CANH or CANL.
+
+**Settings** (macros in `Core/Inc/board_config.h`, no build flags):
+
+| Macro | Default | Meaning |
+|---|---|---|
+| `CAN_BITRATE_KBPS` | 1000 | 125, 250, 500 or 1000 |
+| `CAN_LOOPBACK` | 0 | 1 = external loopback (frames on TX with no other node), 0 = normal node |
+| `CAN_GEN_TX` | 0 | 1 = send test frames (a standard frame 0x123, a DroneCAN NodeStatus style frame, 0x7FF, a remote frame 0x321, every 50 ms); 0 = listen only |
+| `CAN_DNA_SERVER` | 1 | run a DroneCAN dynamic node ID server |
+
+In listen-only mode the node still acknowledges valid frames from other nodes; the ACK
+does not depend on the receive filter, and a sender with no acknowledging node would
+retransmit forever.
+
+**DroneCAN node ID server.** A device without a node ID sends anonymous allocation
+requests (message type 1, source node 0) and repeats them until answered. The board
+answers the three-stage exchange (6 + 6 + 4 bytes of the 16 byte unique ID), grants node
+20 (up to four devices are remembered by unique ID), and announces NodeStatus as node 1
+once a second. Replies longer than 7 bytes are sent as multi-frame transfers with the
+transfer CRC. The format and the data type signature used for that CRC are taken from
+the DroneCAN specification and have been exercised against one ARK Flow sensor only.
+
+Decode the traffic with the PC app (Protocol > CAN).
+

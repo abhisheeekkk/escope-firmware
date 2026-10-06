@@ -140,6 +140,7 @@ set(CORE_SOURCES
     Core/Src/acquisition.c
     Core/Src/burst.c
     Core/Src/oled.c
+    Core/Src/can_gen.c
 )
 
 set(USB_APP_SOURCES

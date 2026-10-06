@@ -46,6 +46,21 @@
 
 #define FEATURE_UART_TEST   0     /* set to 1 to send "Hello World" on PA2 (USART2 TX, 500 kbaud) */
 
+/* CAN (FDCAN1: PD0 RX / PD1 TX, through an external 3.3 V transceiver, see can_gen.c).
+ * On by default in the SIG_GEN role only: PD0/PD1 are scope inputs in the other roles.
+ * Edit the macros below, no build flags needed.
+ *   CAN_BITRATE_KBPS  125, 250, 500 or 1000 (DroneCAN / ARK Flow normally 1000)
+ *   CAN_LOOPBACK      0 = normal node on the bus (ACKs frames from other nodes)
+ *                     1 = external loopback, no other node needed
+ *   CAN_GEN_TX        1 = also send the test frames, 0 = listen only (still ACKs)
+ *   CAN_DNA_SERVER    1 = run a DroneCAN dynamic node ID server (node 1): a sensor that
+ *                     asks for an ID gets node 20, then starts publishing normally */
+#define FEATURE_CAN_TEST    SIG_GEN
+#define CAN_BITRATE_KBPS    1000
+#define CAN_LOOPBACK        0
+#define CAN_GEN_TX          0
+#define CAN_DNA_SERVER      1     /* answer DroneCAN node ID requests (gives the sensor an ID) */
+
 /* OLED I2C bus speed in kHz: 100, 400 or 1000.
  *   100   standard mode
  *   400   fast mode

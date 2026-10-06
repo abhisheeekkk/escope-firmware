@@ -44,7 +44,7 @@
 #define FEATURE_OLED_I2C    1
 #endif
 
-#define FEATURE_UART_TEST   0     /* set to 1 to send "Hello World" on PA2 (USART2 TX, 500 kbaud) */
+#define FEATURE_UART_TEST   1     /* set to 1 to send "Hello World" on PA2 (USART2 TX, 500 kbaud) */
 
 /* CAN (FDCAN1: PD0 RX / PD1 TX, through an external 3.3 V transceiver, see can_gen.c).
  * On by default in the SIG_GEN role only: PD0/PD1 are scope inputs in the other roles.

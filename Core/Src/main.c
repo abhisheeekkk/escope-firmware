@@ -218,18 +218,6 @@ int main(void)
       if (Oled_PrintAsync(3 * 6, 3, num))     /* after "MS " */
         last_oled = now;
     }
-#if FEATURE_CAN_TEST
-    /* CAN counters on the third OLED row, 5 Hz, same non-blocking path */
-    {
-      static uint32_t last_can_oled;
-      if (oled_present && !Oled_Busy() && now - last_oled >= 100 && now - last_can_oled >= 200) {
-        char st[24], line[24];
-        CanGen_Stats(st, sizeof st);
-        snprintf(line, sizeof line, "%-21s", st);
-        if (Oled_PrintAsync(0, 2, line)) { last_can_oled = now; last_oled = now; }
-      }
-    }
-#endif
 #endif
 #if 0
     if (now - last_tx >= 1000) {

@@ -104,7 +104,7 @@ static void send(uint32_t id, uint32_t id_type, uint32_t frame_type, uint8_t dlc
 
 #if CAN_DNA_SERVER
 /* ---- DroneCAN dynamic node ID allocation server --------------------------------------
- * A sensor with no node ID (an ARK Flow out of the box) sends anonymous
+ * A device with no node ID sends anonymous
  * uavcan.protocol.dynamic_node_id.Allocation requests (message type 1, source node 0) and
  * repeats them until a server answers. The 16 byte unique ID goes over in three requests
  * (6 + 6 + 4 bytes); the server echoes the part it has, and answers the last one with the
@@ -246,7 +246,7 @@ void CanGen_Task(uint32_t now_ms)
     counter++;
     break;
   case 1: {     /* DroneCAN NodeStatus (message type 341) from node 10, one frame, as an
-                 * ARK sensor sends it. ID = priority 24 | type 341 << 8 | node 10. */
+                 * DroneCAN device sends it. ID = priority 24 | type 341 << 8 | node 10. */
     uint32_t uptime_s = now_ms / 1000U;
     d[0] = (uint8_t)uptime_s;         d[1] = (uint8_t)(uptime_s >> 8);
     d[2] = (uint8_t)(uptime_s >> 16); d[3] = (uint8_t)(uptime_s >> 24);

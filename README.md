@@ -416,7 +416,7 @@ answers the three-stage exchange (6 + 6 + 4 bytes of the 16 byte unique ID), gra
 20 (up to four devices are remembered by unique ID), and announces NodeStatus as node 1
 once a second. Replies longer than 7 bytes are sent as multi-frame transfers with the
 transfer CRC. The format and the data type signature used for that CRC are taken from
-the DroneCAN specification and have been exercised against one ARK Flow sensor only.
+the DroneCAN specification and have been exercised against one DroneCAN device only.
 
 Decode the traffic with the PC app (Protocol > CAN).
 

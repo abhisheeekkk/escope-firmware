@@ -49,7 +49,7 @@
 /* CAN (FDCAN1: PD0 RX / PD1 TX, through an external 3.3 V transceiver, see can_gen.c).
  * On by default in the SIG_GEN role only: PD0/PD1 are scope inputs in the other roles.
  * Edit the macros below, no build flags needed.
- *   CAN_BITRATE_KBPS  125, 250, 500 or 1000 (DroneCAN / ARK Flow normally 1000)
+ *   CAN_BITRATE_KBPS  125, 250, 500 or 1000 (DroneCAN normally uses 1000)
  *   CAN_LOOPBACK      0 = normal node on the bus (ACKs frames from other nodes)
  *                     1 = external loopback, no other node needed
  *   CAN_GEN_TX        1 = also send the test frames, 0 = listen only (still ACKs)

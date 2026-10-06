@@ -6,7 +6,7 @@
 /* CAN test traffic from FDCAN1 (PD0 = RX, PD1 = TX, AF9), for the signal generator
  * role. Classic CAN 2.0A/B frames are sent one every CAN_GEN_PERIOD_MS, cycling
  * through a standard data frame, a DroneCAN-style extended NodeStatus frame (the
- * kind an ARK Flow sensor sends), an empty frame and a remote frame.
+ * kind a DroneCAN device sends), an empty frame and a remote frame.
  *
  * With CAN_LOOPBACK = 1 (board_config.h) the controller runs in external loopback
  * mode: it ignores the missing ACK, and the frames appear on the TX pin as plain

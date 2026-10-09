@@ -34,6 +34,31 @@ full source code transparency and no vendor lock-in.
 | Flash | 2 MB |
 | RAM | 1 MB (512KB AXI + 128KB DTCM + others) |
 
+### Pin map
+
+All signals are 3.3 V logic. Connect grounds between boards.
+
+| Function | Pins | Roles | Notes |
+|---|---|---|---|
+| Capture inputs D0-D7 | PD0-PD7 | scope | 8 channels, pull-down, sampled at 48 MS/s |
+| Built-in test signal | PB3-PB10 (D0=PB3 ... D7=PB10) | all | 1 MHz square waves; wire to PD0-PD7 to self-test |
+| USB (PC link) | PA11 (D-), PA12 (D+) | scope | OTG FS CDC |
+| UART test output | PA2 (USART2 TX, AF7) | when `FEATURE_UART_TEST` | 500 kbaud 8N1, TX only |
+| I2C (OLED) | PD12 (SCL), PD13 (SDA) (I2C4, AF4) | when `FEATURE_OLED_I2C` | SSD1306 at address 0x3C |
+| SPI (TFT) | PA5 (SCK), PA7 (MOSI), PA4 (CS), PC4 (DC), PC5 (RES) | SIG_GEN | ST7789V, SPI1 AF5, mode 0 |
+| CAN | PD1 (TX), PD0 (RX) (FDCAN1, AF9) | SIG_GEN | through a 3.3 V CAN transceiver |
+| LED | PC13 | all | blink rate shows the role |
+| DMA debug | PC8 | all | toggles every capture half buffer |
+| SWD | PA13, PA14 | all | programming |
+
+PD0 and PD1 are capture inputs in the scope roles and the CAN pins in `SIG_GEN`, so CAN is
+only built into `SIG_GEN`. The boot-time pin sweep (PA0-PA10, PB0-PB15) runs before the
+peripherals above are started.
+
+To decode a protocol, wire the signal pins of the target board to capture inputs of the scope
+board and choose those channels in the app's Protocol menu: UART TX, I2C SCL and SDA, CAN on
+the transceiver RXD, SPI clock, MOSI and MISO.
+
 ---
 
 ## Architecture
@@ -287,14 +312,14 @@ reserved word of every burst header, and `decode_burst.py` prints them once.
 ## UART test output
 
 `main.c` also drives a UART test signal so the protocol decoder in the PC app
-can be checked with no other equipment. USART2 TX is on **PA2** (AF7), TX only,
-**1,000,000 baud, 8N1**. The main loop sends a single `U` (0x55, alternating
-bits) roughly every 2 ms. At 1 Mbaud a byte takes 10 us, so the blocking
-`HAL_UART_Transmit` costs nothing noticeable.
+can be checked with no other equipment (`FEATURE_UART_TEST` in `board_config.h`).
+USART2 TX is on **PA2** (AF7), TX only, **500,000 baud, 8N1**. The main loop sends
+`Hello World` (11 bytes, about 220 us) roughly every 2 ms with a blocking
+`HAL_UART_Transmit`, which costs nothing noticeable.
 
 Wire PA2 to any capture input (for example PD0) and select it as TX in the
-app's Protocol menu; the baud rate is detected automatically. Each bit is 1 us,
-about 48 samples at 48 MS/s.
+app's Protocol menu; the baud rate is detected automatically. Each bit is 2 us,
+about 96 samples at 48 MS/s.
 
 `MX_USART2_UART_Init()` runs after `Test_PWM_Init()` on purpose: the pin sweep
 drives PA0-PA10 as outputs and would otherwise disturb PA2.
@@ -309,6 +334,9 @@ drives PA0-PA10 as outputs and would otherwise disturb PA2.
       Inc/burst.h       Public API
       Src/can_gen.c     FDCAN1 test traffic and DroneCAN node ID server (SIG_GEN role)
       Inc/can_gen.h     Its public API
+      Src/tft.c         ST7789V SPI TFT driver, test screen and counter (SIG_GEN role)
+      Inc/tft.h         Its pins and public API
+      Inc/font5x7.h     5x7 font shared by the OLED and TFT drivers
       Inc/board_config.h  Role and feature selection (SCOPE_ONLY, SIG_GEN, CAN, I2C speed)
       Src/acquisition.c Earlier edge-stream engine (not started by main)
       Inc/acquisition.h Its public API
@@ -330,12 +358,12 @@ drives PA0-PA10 as outputs and would otherwise disturb PA2.
 - [x] Python chunk decoder
 - [x] Triggered burst capture (8 ch x 4.8 ms) with VCD export
 - [x] Built-in test signal on PB3-PB10
-- [x] UART test output on PA2 (1 Mbaud) for protocol decoding
+- [x] UART test output on PA2 (500 kbaud) for protocol decoding
 - [ ] PC software integration (EmbeddedScope Qt6 app)
 - [x] UART protocol decoder with auto baud (PC app)
 - [x] I2C protocol decoder (PC app)
 - [x] CAN protocol decoder (PC app) with a CAN test node and DroneCAN node ID server in the SIG_GEN firmware
-- [ ] SPI protocol decoder
+- [x] SPI protocol decoder (PC app)
 - [x] Trigger set from the PC over USB: any channel, rising/falling/either edge, plus the pre/post split and Auto/Normal mode (default PD0 rising, Auto)
 - [ ] FPGA hybrid V1 (iCE40 + STM32 USB bridge)
 - [ ] USB3 ASIC V2 (500 MS/s, 32 channels)
@@ -384,6 +412,59 @@ power-up default is a pull-down on PD0-PD7 (mask 0).
 
 The OLED counter on I2C4 is updated through a non-blocking path (`Oled_Task`),
 so the main loop keeps scanning for the trigger while the display is written.
+
+## SPI TFT (SIG_GEN role)
+
+`FEATURE_TFT_SPI` (enabled in the `SIG_GEN` role) drives a 240x320 ST7789V TFT over SPI1 so
+the logic analyser has known SPI traffic to decode. The driver is write only: commands are
+sent with the DC line low, then parameters or pixel data with DC high, all inside one chip
+select window. SPI mode 0 (clock idles low, data sampled on the rising edge), MSB first, 8
+bit frames, 16-bit RGB565 pixels.
+
+| Display pin | STM32 pin | Function |
+|---|---|---|
+| SCL | PA5 | SPI1 SCK (AF5) |
+| SDA | PA7 | SPI1 MOSI (AF5) |
+| CS | PA4 | chip select, active low (GPIO) |
+| DC | PC4 | low = command, high = data (GPIO) |
+| RES | PC5 | reset, active low (GPIO) |
+| VCC, GND | 3V3, GND | 3.3 V supply |
+
+The screen shows a title, the real SPI clock, red/green/blue/white bars (colour order
+check) and a counter that is redrawn every 250 ms. Only the digits that changed are sent,
+so each update is a handful of short transfers (CASET, RASET, RAMWR and pixels) and the main
+loop is never blocked for long.
+
+**Clock rate.** `TFT_SPI_KHZ` in `board_config.h`. The SPI1 kernel clock is PLL1Q (64 MHz) and
+the prescaler divides it by 2, 4 ... 256, so the rate is 64 MHz / 2^n:
+
+| `TFT_SPI_KHZ` | Bit time | Samples per bit at 48 MS/s | Ideal full-screen fill (153.6 KB) |
+|---|---|---|---|
+| 250 | 4 us | 192 | 4.9 s |
+| 500 (default) | 2 us | 96 | 2.5 s |
+| 1000 | 1 us | 48 | 1.2 s |
+| 2000 | 500 ns | 24 | 0.61 s |
+| 4000 | 250 ns | 12 | 0.31 s |
+| 8000 | 125 ns | 6 | 0.15 s |
+| 16000 | 62.5 ns | 3 | 77 ms |
+| 32000 | 31.25 ns | 1.5 | 38 ms |
+
+The ST7789V datasheet allows about 15 MHz for writes, so 16000 is at the limit and 32000 is
+beyond it, although many modules still work. For decoding with this analyser (48 MS/s) stay
+at 8000 or below; above that there are too few samples per clock. Start at 250 or 500, check
+SCK on the scope, then step up. `Tft_ActualKhz()` returns the rate the firmware computed.
+
+To decode it, wire PA5 and PA7 to two capture inputs of the scope board and choose
+Protocol > SPI in the app (CLK and MOSI; the display has no MISO line). The mode and clock rate
+are detected.
+
+CS, DC and RES use the slowest edges (they change rarely) so they do not couple onto the neighbouring SCK
+wire (PA4 and PA5 are adjacent pins). The edge speed of SCK and MOSI follows the clock rate (low up to 2 MHz, medium up to 8 MHz, high at
+16 MHz, very high at 32 MHz) so slow clocks get slow, quiet edges on jumper wires.
+
+`TFT_INVERT` (default 1) turns colour inversion on, which most IPS modules need; `TFT_BGR`
+swaps red and blue if the bars come out in the wrong order. A display cannot be detected over
+this write-only interface, so a missing display is not reported.
 
 ## CAN node (SIG_GEN role)
 

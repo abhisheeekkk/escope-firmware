@@ -141,6 +141,7 @@ set(CORE_SOURCES
     Core/Src/burst.c
     Core/Src/oled.c
     Core/Src/can_gen.c
+    Core/Src/tft.c
 )
 
 set(USB_APP_SOURCES

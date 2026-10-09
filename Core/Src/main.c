@@ -18,6 +18,7 @@
 #include "board_config.h"
 #include "oled.h"
 #include "can_gen.h"
+#include "tft.h"
 #include "usbd_cdc_if.h"
 #include <stdio.h>
 
@@ -158,6 +159,9 @@ int main(void)
 #if FEATURE_CAN_TEST
   CanGen_Init();           /* FDCAN1 on PD0 / PD1 */
 #endif
+#if FEATURE_TFT_SPI
+  Tft_Init();              /* ST7789V on SPI1: SCK PA5, MOSI PA7, CS PA4, DC PC4, RES PC5 */
+#endif
 #if FEATURE_ACQUISITION
   Burst_Init();
   /* Print DMA state immediately after start */
@@ -206,6 +210,9 @@ int main(void)
 #endif
 #if FEATURE_CAN_TEST
     CanGen_Task(now);
+#endif
+#if FEATURE_TFT_SPI
+    Tft_Task(now);
 #endif
 #if FEATURE_OLED_I2C
     /* OLED millisecond counter every 200 ms. The update goes out through the
